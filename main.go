@@ -58,10 +58,13 @@
 package main
 
 import (
+	"crypto/md5"
 	"encoding/hex"
 	"fmt" // Import the fmt package to print messages to the console.
+	"io"
 	"log" // Import the log package to log errors to the console.
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 
@@ -81,7 +84,10 @@ func main() {
 	if err != nil {
 		log.Fatalln("Set tcp payload offset as integer")
 	}
-	parsePcapFile(offset, os.Args[2])
+	parsePcapFile(offset, os.Args[2]) //START MAIN FUNC
+	getMD5sum(os.Args[2])
+	TsharkGetLdapFilteand(os.Args[2])
+
 }
 
 func parsePcapFile(tcpOffset int, pcapName string) {
@@ -125,11 +131,13 @@ func parsePcapFile(tcpOffset int, pcapName string) {
 
 			//[TODO]Replace with regexp that matches rule content
 			//Filter to get only ldap_search_requests
-			if encodedString != "" && encodedString[18:22] == "6384" {
-				//PRINT HEX PAYLOAD
-				fmt.Println(hex.Dump(tcpPacket.Payload))
-				//fmt.Println(hex.Dump(tcpPacket.Payload[tcpOffset:]))
-				parseLDAPFilter(tcpPacket.Payload[tcpOffset:])
+			if encodedString != "" && len(encodedString) > 22 {
+				if encodedString[18:22] == "6384" {
+					//PRINT HEX PAYLOAD
+					fmt.Println(hex.Dump(tcpPacket.Payload))
+					//fmt.Println(hex.Dump(tcpPacket.Payload[tcpOffset:]))
+					parseLDAPFilter(tcpPacket.Payload[tcpOffset:])
+				}
 
 			}
 
@@ -169,5 +177,41 @@ func parseLDAPFilter(data []byte) string {
 	fmt.Printf("alert tcp any any -> any [389,636,3268,3269] (msg:\"LDAP seach request\"; flow:to_server,established;\\\ncontent:\"|63|\"; content:\"|04|\"; distance:0; content:\"DC=\"; nocase; distance:0; content:\"|0A 01 02|\"; distance:0;\\\n%sthreshold:type both,track by_src,count 1,seconds 60; sid:1000001; rev:1;)\n", res)
 	fmt.Println()
 	return fmt.Sprintf("alert tcp any any -> any [389,636,3268,3269] (msg:\"LDAP seach request\"; flow:to_server,established;\\\ncontent:\"|63|\"; content:\"|04|\"; distance:0; content:\"DC=\"; nocase; distance:0; content:\"|0A 01 02|\"; distance:0;\\\n%sthreshold:type both,track by_src,count 1,seconds 60; sid:1000001; rev:1;)\n", res)
+
+}
+
+func TsharkGetLdapFilteand(pcapFile string) {
+
+	tsharkFilters := []string{"-r", pcapFile, "-Y", "ldap.protocolOp == 3", "-T", "fields", "-e", "text"}
+
+	cmdTshark := exec.Command("tshark", tsharkFilters...)
+
+	cmdTshark.Stderr = os.Stderr
+
+	out, err := cmdTshark.Output()
+
+	if err != nil {
+		fmt.Println("Err startig tshark", err)
+	} else {
+		fmt.Println("LDAP FILTERS:", string(out))
+
+	}
+}
+
+func getMD5sum(filename string) {
+
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Panicln("[!] Cant  open pcap file to get md5sum")
+		return
+	}
+	defer file.Close()
+
+	h := md5.New()
+	if _, err := io.Copy(h, file); err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("MD5sum: %x\n", h.Sum(nil))
 
 }
